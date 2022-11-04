@@ -1,0 +1,1183 @@
+---
+title: "Hate Speech Classification"
+author: "Wen Zhang"
+date: "2020/12/3"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+library(dplyr)
+library(stringr)
+library(tidytext)
+library(ggplot2)
+library(tidyr)
+library(scales)
+library(readr)
+library(knitr)
+library(tidyverse)
+library(dplyr)
+library(stringr)
+jigsaw <- read_csv("train.csv")
+```
+
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+text2<-c(jigsaw$comment_text[1:100])
+##Remove Punctuation
+text2<-str_replace_all(text2,"[[:punct:]]"," ")
+##Remove numbers
+text2<-str_replace_all(text2,"[[:digit:]]"," ")
+text_df <- tibble(line = 1:100, text = text2)
+##Remove stop wrods
+data(stop_words)
+text_df2 <-text_df %>%
+  unnest_tokens(word, text)%>%
+  ##Restructure it in the one-token-per-row format using unnest_tokens, removing stop words using anti_join
+  anti_join(stop_words)
+text_df2
+```
+
+Disclaimer: the dataset for this research contains text that may be considered profane, vulgar, or offensive.
+
+## Introduction
+As the internet has been utilized widely in recent years, people tend to favor talking and discussing treading events and topics online. As a result, commenting on issues and circumstances following the original posts has got more popular than before. However, while commenting on various subjects, when people are starting to get more emotional and intense, they tend to express their emotions through the word's utilization. Thus, there appears a large number of inappropriate words. As a result, discussing things that people care are about is getting more and more difficult. People face the threat of abuse and harassment when expressing their own ideas. The toxic comments negatively affect the cyber environment and negatively affect teenagers who also have access to these comments. Moreover, people might tend to not express themselves and close the comments option. The platforms then struggle to facilitate the conversations, which makes number of communities decide to limit and shut down the comments from user to avoid the negative impacts. Therefore, our goal is to locate the specific toxic identifier and utilize the identifiers to create a model that could detect the individual sub-categories(toxic, severe toxic, obscene, threat, insult, identity hate) those comments are. 
+
+## Data Cleaning and EDA
+
+The data we utilized is from the Conversation AI team. The research institute is working on generating tools to improve the online conversation. In our project, we are only focusing on negative online behaviors. The data we are working on is provided by Conversation AI team. Conversation AI team is a research initiative that is founded by Jigsaw and Google. Negative online behavior is one of their studies. The data contains large number of Wikipedia comments, and was labeled by human raters for toxicity, including toxic, severe_toxic, obscene, threat, insult and identity_hate. There are 159571 rows in the data. Each row contains id, text of the comments and 6 categorical variable which are sub-categories of toxicity including toxic, severe_toxic, obscene, threat, insult and identity_hate. The 6 sub-categories are created by human. Comments may fall into more than one category. For instance, some comments might be labeled as both toxic and identity hate. Below is a sample comments before data cleaning. 
+
+```{r,echo=FALSE}
+jigsaw$comment_text[7]
+```
+
+This comment is a typical negative comment that are being labeled as toxic, severe_toxic, obscene, and insult. 
+Here is another example of comments before data cleaning. 
+
+```{r,echo=FALSE}
+jigsaw$comment_text[9]
+```
+
+The second comment are example of non-toxic comment.  
+
+### Data Cleaning
+
+We first load the training data. We will do the data cleaning regarding to the text of the comment. We convert text data into data frame and remove the punctuation and digit exist in the comments that will obscure our data analysis. Then we utilized tibble() to convert text data into data frame. After that we eliminate the stop word that will also obscure our analysis. The stop word included “a”, “a’s”, "able", "about". They are all common words that show up frequently in the sentence, but will obscure our analysis.  The complete list of stop words can be access by data(stop_words). In order to implement analysis, we need to have a one-table-per-row table. We then tokenize the comments and reconstruct it into a one-token-per-row data using unnest_tokens. For instance, is the a sample comments is "I eat 10 apples today", after our data cleaning, the sentence will become  "i", "eat", "apples", and "today".
+
+### EDA 
+
+After the data cleaning, we are now going to closely observe the words and figure out the insights of the words. By doing that, we are able to find out identifiers that could be included in our models later.  
+
+We  create two different sub-categories, “Nasty” and “Neutral”. “Nasty” represents that the comment falls into at least one of the category of toxic, severe toxic, obscene, threat, insult, or identity hate. “Neutral” represents that the comment_text does not fall into any of the category including toxic, severe toxic, obscene, threat, insult, and identity hate. There are 16225 nasty comments and 143346 neutral comments. 
+
+
+```{r,echo=FALSE,warning=FALSE}
+jigsaw <- jigsaw %>%
+  mutate(IsNasty = 0)
+for(i in 1:nrow(jigsaw)){
+  if((jigsaw$toxic[i] + jigsaw$severe_toxic[i] + jigsaw$obscene[i] + jigsaw$insult[i] + jigsaw$threat[i] + jigsaw$identity_hate[i]) > 0){
+    jigsaw$IsNasty[i] <- 1
+  }
+}
+NastyData <- subset(jigsaw,IsNasty > 0)
+NeutralData <- subset(jigsaw, IsNasty == 0)
+#Create six subcategories
+Toxic<-subset(NastyData,NastyData$toxic==1)
+Stoxic<-subset(NastyData,NastyData$severe_toxic==1)
+Obscene<-subset(NastyData,NastyData$obscene==1)
+Threat<-subset(NastyData,NastyData$threat==1)
+Insult<-subset(NastyData,NastyData$insult==1)
+Ihate<-subset(NastyData,NastyData$identity_hate==1)
+```
+
+We then create visualization to observe the common words about all observations to gain the knowledge about the overall word frequency of the observations. 
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+#Most common words the dataset
+text_df2%>%
+    count(word, sort = TRUE) %>%
+  filter(n > 10) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()+labs(title="Figure 1.1")+ylab("NeutralData")
+```
+
+The top 10 words are page, talk, don, article, wikipedia, deletion, image, edit, fair, copyright. Since our goal is to come up with a model that could detect the  sub-categories a certain comment belongs to, it make logically sense to more closely observe the negative comments. We then make a visualization that only focus on nasty comments. 
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+isnasty_df <- tibble(line = 1:nrow(NastyData), text = NastyData$comment_text)
+
+isnasty_df <- isnasty_df %>%
+  unnest_tokens(word, text )
+
+isnasty_df <- isnasty_df %>%
+  anti_join(stop_words)
+
+isnasty_df %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 2000) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()+labs(title="Figure 1.2")+ylab("NastyData")
+
+```
+
+The top 10 words are f-k, s-t, wikipedia, n-r, fu-k, su-k, a-s, h-e, p-e, and g-y.We can observe from both visulizaiton of nasty and neutral comments that the top words are different, but there are some overlapping, for instance "wikipedia" and "page". Also, neutral data visualization mostly capture neutral words while in nasty data visualization, most of the words are profane, vulgar, or offensive.
+
+We then closely looked at 6 sub categories including toxic, severe toxic, obscene, threat, insult, or identity hate to gain insights about words in individual categories.We created visualizations for the top frequent words for each sub-categories separately. 
+
+
+```{r,echo=FALSE,warning=FALSE,fig.width=3.5,fig.height=2.5,message=FALSE}
+text1<-c(Toxic$comment_text[1:15294])
+text_df1 <- tibble(line = 1:15294, text = text1)
+data(stop_words)
+text_df1 <-text_df1 %>%
+  unnest_tokens(word, text)%>%
+  anti_join(stop_words)
+text2<-c(Stoxic$comment_text[1:1595])
+text_df2 <- tibble(line = 1:1595, text = text2)
+data(stop_words)
+text_df2 <-text_df2 %>%
+  unnest_tokens(word, text)%>%
+  anti_join(stop_words)
+text3<-c(Obscene$comment_text[1:8449])
+text_df3 <- tibble(line = 1:8449, text = text3)
+data(stop_words)
+text_df3 <-text_df3 %>%
+  unnest_tokens(word, text)%>%
+  anti_join(stop_words)
+text4<-c(Threat$comment_text[1:478])
+text_df4 <- tibble(line = 1:478, text = text4)
+data(stop_words)
+text_df4 <-text_df4 %>%
+  unnest_tokens(word, text)%>%
+  anti_join(stop_words)
+text5<-c(Insult$comment_text[1:7877])
+text_df5 <- tibble(line = 1:7877, text = text5)
+data(stop_words)
+text_df5 <-text_df5 %>%
+  unnest_tokens(word, text)%>%
+  anti_join(stop_words)
+text6<-c(Ihate$comment_text[1:1405])
+text_df6 <- tibble(line = 1:1405, text = text6)
+data(stop_words)
+text_df6 <-text_df6 %>%
+  unnest_tokens(word, text)%>%
+  anti_join(stop_words)
+
+par(mfrow = c(3,2))
+text_df1%>%
+    count(word, sort = TRUE) %>%
+  filter(n > 2000) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()+ylab("Toxic")+labs(title="Figure 1.3")
+text_df2%>%
+    count(word, sort = TRUE) %>%
+  filter(n > 700) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()+ylab("Severe Toxic")+labs(title="Figure 1.4")
+text_df3%>%
+    count(word, sort = TRUE) %>%
+  filter(n > 1200) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()+ylab("Obscene")+labs(title="Figure 1.5")
+text_df4%>%
+    count(word, sort = TRUE) %>%
+  filter(n > 130) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()+ylab("Threat")+labs(title="Figure 1.6")
+text_df5%>%
+    count(word, sort = TRUE) %>%
+  filter(n > 1400) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()+ylab("Insult")+labs(title="Figure 1.7")
+text_df6%>%
+    count(word, sort = TRUE) %>%
+  filter(n > 400) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip()+ylab("IdentityHate")+labs(title="Figure 1.8")
+```
+
+
+We found out the top 10 words for each category. Figure 1.3 is top word frequency for toxic comments. There are 15294 observations being labeled as toxic. The top 10 frequently appeared word are f-k, s-t, n-r, wikipedia,su-k, f-g, a-s, h-e, g-y, and page. Figure 1.4 is top word frequency for severe toxic comments. There are 1595 observations being labeled as severe toxic. The top 10 frequently appeared word are f-k, su-k, a-s, s-t,f-t, f-g, d-e, b-h, n-r, and su-s.Figure 1.5 is top word frequency for obscene comments. There are 8449 observations being labeled as obscene The top 10 frequently appeared word are f-k, s-t, f-g, su-k, a-s, n-r, b-h, wikiedia, c-t, and f-t. Figure 1.6 is top word frequency for threat comments. There are 478 observations being labeled as threat The top 10 frequently appeared word are d-e, a-s, k-l, b-k, f-k, j-m, w-s, s-l, f-g, and b-n. Figure 1.7 is top word frequency for insult comments. There are 7877 observations being labeled as insult The top 10 frequently appeared word are f-k, su-k, n-r,f-g, a-s, f-t, fa-t, b-h, s-t, m-n, c-t. Figure 1.8 is top word frequency for identity hate comments. There are 7877 observations being labeled as identity hate The top 10 frequently appeared word are n-r, f-t, j-w,g-y,d-e, f-k, fa-t, f-g, h-g, and s-k. 
+
+We also checked the overlap of each two categories. The result suggested that toxic, obscene and insult tend to have high correlation with each other. There are 48.85% of comments that are categorized as toxic and obscene, and 45.26% of comments that are categorized as toxic and insult.
+
+```{r,echo=FALSE,warning=FALSE}
+jigsaw$Toxandhat <- 0
+for(i in 1:nrow(jigsaw)){
+  if((jigsaw$toxic[i] + jigsaw$IsNasty[i]) == 2){
+    jigsaw$Toxandhat[i] <- 1
+  }
+}
+
+jigsaw$ToxandOb <- 0
+for(i in 1:nrow(jigsaw)){
+  if((jigsaw$toxic[i] + jigsaw$obscene[i]) == 2){
+    jigsaw$ToxandOb[i] <- 1
+  }
+}
+
+jigsaw$ToxandST <- 0
+for(i in 1:nrow(jigsaw)){
+  if((jigsaw$toxic[i] + jigsaw$severe_toxic[i]) == 2){
+    jigsaw$ToxandST[i] <- 1
+  }
+}
+
+jigsaw$ToxandIns <- 0
+for(i in 1:nrow(jigsaw)){
+  if((jigsaw$toxic[i] + jigsaw$insult[i]) == 2){
+    jigsaw$ToxandIns[i] <- 1
+  }
+}
+
+jigsaw$ToxandThr <- 0
+for(i in 1:nrow(jigsaw)){
+  if((jigsaw$toxic[i] + jigsaw$threat[i]) == 2){
+    jigsaw$ToxandThr[i] <- 1
+  }
+}
+
+jigsaw$ToxandIH <- 0
+for(i in 1:nrow(jigsaw)){
+  if((jigsaw$toxic[i] + jigsaw$identity_hate[i]) == 2){
+    jigsaw$ToxandIH[i] <- 1
+  }
+}
+
+jigsaw$InsandObs <- 0
+for(i in 1:nrow(jigsaw)){
+  if((jigsaw$insult[i] + jigsaw$obscene[i]) == 2){
+    jigsaw$InsandObs[i] <- 1
+  }
+}
+```
+
+```{r,echo=FALSE,warning=FALSE}
+library(knitr) 
+table(jigsaw$Toxandhat)
+15294/nrow(NastyData)
+table(jigsaw$ToxandST)
+1595/nrow(NastyData)
+table(jigsaw$ToxandOb)
+7926/nrow(NastyData)
+table(jigsaw$ToxandIns)
+7344/nrow(NastyData)
+table(jigsaw$ToxandThr)
+449/nrow(NastyData)
+table(jigsaw$ToxandIH)
+1302/nrow(NastyData)
+table(jigsaw$InsandObs)
+6155/nrow(NastyData)
+```
+
+To further compare the overlap between each categories, we created 15 word clouds. The flowing visualizations are word clouds for toxic and severe toxic(figure 2.1), toxic and obscene(figure 2.2), toxic and threat(figure 2.3), toxic and insult(figure 2.4), toxic and identity hate(figure 2.5), severe toxic and obscene(figure 2.6), severe toxic and threat(figure 2.7), severe toxic and insult(figure 2.8), severe toxic and identity hate(figure 2.9), obscene and threat(figure 2.10), obscene and insult(figure 2.11), obscene and identity hate(figure 2.12), threat and insult(figure 2.13), threat and identity hate(figure 2.14), and insult and identity hate(figure 2.15). 
+
+```{r echo=FALSE, warning=FALSE,message=FALSE }
+train_df <-tibble(line=1:159571, text=jigsaw)
+tidy_train<- jigsaw%>%
+  unnest_tokens(word,comment_text)%>%
+  anti_join(stop_words)%>%
+  filter(!grepl("[[:digit:]]",word) )
+
+```
+
+
+```{r,echo=FALSE,warning=FALSE}
+isToxic <- tidy_train[tidy_train$toxic != 0,]
+isSevere_toxic <- tidy_train[tidy_train$severe_toxic != 0,]
+isObscene <- tidy_train[tidy_train$obscene != 0,]
+isThreat <- tidy_train[tidy_train$threat != 0,]
+isInsult <- tidy_train[tidy_train$insult != 0,]
+isIdentity_hate  <- tidy_train[tidy_train$identity_hate != 0,]
+
+```
+
+
+```{r,echo=FALSE,warning=FALSE,fig.width=3.5,fig.height=2.5,message=FALSE}
+
+## Toxic & ST
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isToxic", x = "isSevere_toxic")+labs(title="Figure 2.1")
+
+## Toxic & Obscene
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isToxic", x = "isObscene")+labs(title="Figure 2.2")
+
+## Toxic & Threat
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isToxic", x = "isThreat")+labs(title="Figure 2.3")
+
+## Toxic & Insult
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isToxic", x = "isInsult")+labs(title="Figure 2.4")
+
+
+## Toxic & IH
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isToxic", x = "isIdentity_hate")+labs(title="Figure 2.5")
+
+## SevereT & Obscene
+frequency <- bind_rows(mutate(isObscene, type = "isObscene"),
+                       mutate(isSevere_toxic, type = "isSevere_toxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion)
+ggplot(frequency, aes(x = isObscene, y = `isSevere_toxic`, color = abs(`isSevere_toxic` - isObscene))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isSevere_toxic", x = "isObscene")+labs(title="Figure 2.6")
+
+## SevereT & Threat
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isSevere_toxic", x = "isThreat")+labs(title="Figure 2.7")
+
+## SevereT & Insult 2.8
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isSevere_toxic", x = "isInsult")+labs(title="Figure 2.8")
+
+## SevereT & Identity Hate 2.9
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isSevere_toxic", x = "isIdentity_hate")+labs(title="Figure 2.9")
+
+
+## Ob & Threat 2.10
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isObscene", x = "isThreat")+labs(title="Figure 2.10")
+
+## Ob & Insult 2.11
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isObscene", x = "isInsult")+labs(title="Figure 2.11")
+
+## Ob & IH 2.12
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isObscene", x = "isIdentity_hate")+labs(title="Figure 2.12")
+
+
+## Threat & Insult 2.13
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isThreat", x = "isInsult")+labs(title="Figure 2.13")
+
+## Threat & isIdentity_hate 2.14
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isThreat", x = "isIdentity_hate")+labs(title="Figure 2.14")
+
+## Insult & isIdentity_hate 2.15
+frequency <- bind_rows(mutate(isSevere_toxic, type = "isSevere_toxic"),
+                       mutate(isObscene, type = "isObscene"),
+                       mutate(isThreat, type = "isThreat"),
+                       mutate(isInsult, type = "isInsult"),
+                       mutate(isIdentity_hate, type = "isIdentity_hate"),
+                       mutate(isToxic, type = "isToxic")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(type, word) %>%
+  group_by(type) %>%
+  filter(n >5) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(type, proportion) %>% 
+  gather(type, proportion, `isInsult`:`isIdentity_hate`)
+
+ggplot(frequency, aes(x = proportion, y = `isToxic`, color = abs(`isToxic` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), low = "darkslategray4", high = "gray75") +
+  theme(legend.position="none") +
+  labs(y = "isInsult", x = "isIdentity_hate")+labs(title="Figure 2.15")
+```
+
+In Figure 2.1, the word cloud for toxic and severe toxic, we can observe the word frequency for both sub-categories of toxic and severe_toxic. The y variable in the graph represent the frequency of word for toxic comments and the x-axis represent the frequency of word for severe_toxic comments. Every data point in the graph represent a individual words that appear both in toxic and severe_toxic comments. The words that clustered on and near the line in the graph is those words that have similar frequency of occurring in both toxic and severe toxic comments. The words that shows up in the right part of the line is the words that tend to show up more in server toxic comments.The more right a word is from the line, the more distinct the word is for severe toxic comments. The words that shows up in the left part of the line is the words that tend to show up more in toxic comments. The more left a word is from the line, the more distinct the word is for toxic comments. For instance, in this visualization, we can observe that there is a toxic and severe toxic comments have high overlapping words. The words tend to cluster around the line. However, there are also several distinct word for each categories. For instance, n-s, h-l and p-p are more distinct for severe toxic comments since it tend to show up less in toxic comments. 
+Similar for other word clouds, based on the visualizations, we can see that the result are consistent with what we conclude above about the overlapping categories. Also, we do find out some unique words for each categories which will be helpful later when fitting models. We also observe a large amount of common words that tend to show up in each categories, for instance, f-k, s-k and f-g. We should be concern with these common words and avoid using them as an identifier for our model, since they are lack of representatives. Those common words tend to appear in most of the sub-categories, thus utilizing them in the model will make the model ignore the unique characteristics of each subcategory and therefore obscure our result. 
+
+## Method 
+
+### Model 1.1 Logistic Regression for Obscene Comments 
+
+We are first going to fit separate Logistic Regression for obscene and insult comments.
+Logistic Regression is the appropriate model to utilize when the dependent variable are binary. It is used to analyze the probability of certain events or class is existing.In our research, toxic comments contains 15294 observations while there are only 16225 nasty comments. Because of the overwhelmingly large number of comments, the result we get might not be typical and will probably loose the ability to characterize only toxic comments. Instead it resemble the characteristics of the whole nasty comments, which obeys our initial goal. Severe toxic comments, according to the word cloud visualization and high frequency word visualization, are highly overlapped with toxic comments. Threat comments only contains 478 comments and identity hate comments only contains 1405 comments. Since the number of comments for these sub-categories are relatively low comparing to the nasty comments. The sample size is too small for us to derive statistics that could represent the parameters in these two sub-categories. 
+Therefore we decide to only fit separate logistic regression model for obscene and insult comments. 
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+train <- read_csv("train.csv")
+```
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+train_isNasty<-train[c(-1,-2)]
+IsNasty<-c(apply(train_isNasty,1,sum)) 
+IsNasty<-ifelse(IsNasty==0,0,1) 
+train_isNasty<-cbind(train,IsNasty) 
+tidy_train<- train_isNasty%>%
+  unnest_tokens(word,comment_text)%>%
+  anti_join(stop_words)%>%
+  filter(!grepl("[[:digit:]]",word) )%>%
+  filter(!grepl("[[:punct:]]",word))
+```
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+train_isNasty<-subset(train_isNasty,IsNasty==1)
+```
+
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+##Create identifier dickhead
+train_isNasty$dickhead<- 0
+train_isNasty$dickhead <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "dickhead" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier boobs
+train_isNasty$boobs <- 0
+train_isNasty$boobs <- as.numeric( unlist(lapply(train_isNasty $comment_text, function(x) "boobs" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier licks
+train_isNasty$lick <- 0
+train_isNasty$lick <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "lick" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier nipple
+train_isNasty$nipple <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "nipple" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier fuck
+train_isNasty$fuck <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "fuck" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier penis
+train_isNasty$penis <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "penis" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier suck
+train_isNasty$suck <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "suck" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier dick
+train_isNasty$dick <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "dick" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier bitch
+train_isNasty$bitch <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "bitch" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier cunt
+train_isNasty$cunt <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "cunt" %in% unlist( strsplit(x, split = " "))  )) )
+```
+
+```{r echo=FALSE, warning=FALSE,message=FALSE, include=FALSE}
+model1<-glm(formula=obscene~nipple+fuck+suck+bitch+cunt, family=binomial("logit"),data=train_isNasty)
+predictions <- predict(model1,type = "resp")
+samp<-unlist(lapply(predictions,function(x) sample(c("obscene","not_obscene"),1,prob = c(1-x,x))))
+
+summary(model1)
+
+library(xtable)
+library(caret)
+library(knitr)
+samp1<-unlist(lapply(train_isNasty$obscene,function(x) sample(c("obscene","not_obscene"),1,prob = c(1-x,x))))
+table("Prediction"=samp,"Actual"=samp1)
+```
+
+From the visualization in last section, we observed top frequency words for obscene comments and several unique words of obscene comments. We then create several binary variables including top frequency words and unique words of obscene to record the appearance of those words in each nasty comments. The value of each variables are 1 if certain word are captured in the comments, otherwise the value will be 0. We finally  decided to use n-e, f-k, s-k, b-h and c-t as our indicators. Below is the regression model we used. 
+
+Let $Y_i$ be a comment in nasty comment data set, where i = 1,..., 16225.
+Let $\pi_i$ be the probability that the comment $Y_i$ is classified as obscene.
+Let $N_i$ be an indicator that comment $Y_i$ contains word "n-e".
+Let $F_i$ be an indicator that comment $Y_i$ contains word "f-k".
+Let $S_i$ be an indicator that comment $Y_i$ contains word "s-k".
+Let $B_i$ be an indicator that comment $Y_i$ contains word "b-h".
+Let $C_i$ be an indicator that comment $Y_i$ contains word "c-t".
+
+$Y_i$~$Bernoulli(\pi_i)$
+
+$logit(\pi_i)=log(\frac{{\pi_{i}}}{{1-\pi_{i}}})=\beta_0 + \beta_1(N_i) + \beta_2(F_i) + \beta_3(S_i) + \beta_4(B_i) + \beta_5(C_i)$
+
+The fitted model is:
+
+$log(\frac{\hat{\pi_{i}}} {1-\hat{\pi_{i}}})=-0.0054 + 0.70(N_i) + 2.27(F_i) + 1.87(S_i) + 3.09(B_i) + 2.35(C_i)$
+
+We then create a confusion matrix to see how the model behaves, and also calculated the Classification Error Rate(CER) to check the overall performance of the model. 
+
+```{r,echo=FALSE,warning=FALSE}
+df1 <- data.frame(
+  LogisticModel = c("PredictedNotObscene","PredictedObscene"),
+ActualNotObscene = c(4804,3641),
+ActualObscene = c(3682,4094))
+kable(df1)
+```
+
+The CER of this model is 45.14%. It means that our model could explain 54.86% of the observation correctly. It suggest that this model is doing an overall relatively good job in differentiating obscene comments and non-obscene comments, but still has potential to be improved. We then turned to fit a logistic regression for insult comments. 
+
+### Model 1.2 Logistic Regression for Insult Comments 
+
+We follow similar steps in fitting logistic regression for insult comments as for obscene comments. We first create several binary variables including top frequency words and unique words of insult to record the appearance of those words in each nasty comments. The value of each variables are 1 if certain word are captured in the comments, otherwise the value will be 0. We finally  decided to use s-d, f-k, s-k, b-h 
+as our indicators. Below is the regression model we used. 
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+##Create identifier Fuck
+train_isNasty$fuck<- 0
+train_isNasty$fuck <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "dickhead" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier Suck
+train_isNasty$suck <- 0
+train_isNasty$suck <- as.numeric( unlist(lapply(train_isNasty $comment_text, function(x) "suck" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier Stupid
+train_isNasty$stupid <- 0
+train_isNasty$stupid <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "stupid" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier die
+train_isNasty$die <- 0
+train_isNasty$die <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "die" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier moron
+train_isNasty$moron <- 0
+train_isNasty$moron <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "moron" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier bitch
+train_isNasty$bitch <- 0
+train_isNasty$bitch <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "bitch" %in% unlist( strsplit(x, split = " "))  )) )
+
+
+##Create identifier cunt
+train_isNasty$cunt <- 0
+train_isNasty$cunt <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "cunt" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier hate
+train_isNasty$hate <- 0
+train_isNasty$hate <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "hate" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier nigger
+train_isNasty$nigger <- 0
+train_isNasty$nigger <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "nigger" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier fat
+train_isNasty$fat <- 0
+train_isNasty$fat <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "fat" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier ass
+train_isNasty$ass <- 0
+train_isNasty$ass <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "ass" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier faggot
+train_isNasty$faggot <- 0
+train_isNasty$faggot <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "faggot" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier jew
+train_isNasty$jew <- 0
+train_isNasty$jew <- as.numeric( unlist(lapply( train_isNasty$comment_text, function(x) "jew" %in% unlist( strsplit(x, split = " "))  )) )
+
+
+```
+
+Let $Y__i$ be a comment in nasty comment data set, where i = 1,..., 16225.
+Let $\pi_i$ be the probability that the comment $Y_i$ is classified as insult
+Let $St_i$ be an indicator that comment $Y_i$ contains word "s-d".
+Let $F_i$ be an indicator that comment $Y_i$ contains word "f-k".
+Let $S_i$ be an indicator that comment $Y_i$ contains word "s-k".
+Let $B_i$ be an indicator that comment $Y_i$ contains word "b-h".
+
+$Y_i$~$Bernoulli(\pi_i)$
+
+$logit(\pi_i)=log(\frac{{\pi_{i}}}{{1-\pi_{i}}})=\beta_0 + \beta_1(St_i) + \beta_2(F_i) + \beta_3(S_i) + \beta_4(B_i)$
+
+The fitted model is:
+
+$log(\frac{\hat{\pi_{i}}}{1-\hat{\pi_{i}}})=-0.14 + 0.57(St_i) + 1.81(F_i) + 1.11(S_i) + 2.086(B_i) $
+
+We then create a confusion matrix to see how the model behaves, and also calculated the Classification Error Rate(CER) to check the overall performance of the model.
+
+
+```{r echo=FALSE, warning=FALSE,message=FALSE, include=FALSE}
+model2<-glm(formula=insult~stupid+fuck+suck+bitch, family=binomial("logit"),data=train_isNasty)
+predictions <- predict(model2,type = "resp")
+samp<-unlist(lapply(predictions,function(x) sample(c("insult","not_insult"),1,prob = c(1-x,x))))
+
+summary(model2)
+library(xtable)
+library(caret)
+library(knitr)
+samp1<-unlist(lapply(train_isNasty$insult,function(x) sample(c("insult","not_insult"),1,prob = c(1-x,x))))
+table("Prediction"=samp,"Actual"=samp1)%>%
+  kable()
+```
+
+
+```{r,echo=FALSE,warning=FALSE}
+df2 <- data.frame(
+  LogisticModel = c("PredictedInsult","PredictedNotInsult"),
+ActualInsult = c(4445,3903),
+ActualNotInsult = c(3984,3893))
+kable(df2)
+```
+
+The CER of this model is 48.61%. It means that our model could explain 52.39% of the observation correctly. It suggest that this model is doing an overall relatively good job in differentiating insult comments and non-insult comments, but can still be improved. 
+
+### Model 2.1 Classification Tree for Insult and Identity hate comments 
+We then decided to use classification tree as our next method to further conduct our research topic. When facing data mining task that contains different classifications and then there exist clustering of data points, statisticians use decision tree models to resolve the problem (2015). There are two kinds of tree models: regression tree and classification tree. Regression tree model works for numerical variable while classification tree works for categorical variable. Classification tree make prediction by using clustering based on similarity of a group of observations. In the classification tree model, the data will split into partitions which is also known as the process of binary recursive partitioning(2009). After the split is conducted, the observations will be divided into different nodes by the splitting variable which is been predetermined. The splitting in each node will continue iterate until some stop conditions are reached(2012). There are several common stop conditions. The most common stop condition is that all leaf nodes are pure. There are also other stop conditions, for instance a given minimum number of observations in one node was reached. 
+
+As we checked the overlap of each two categories before in previous section, the result suggested that toxic, obscene and insult tend to have high correlation with each other. These three categories have a high percentage of overlap. Therefore, we decided to combine these three categories together and create a new variable called TOI.We are not going to look at severe toxic comments. Accoeding to the top word frequency and word clouds, most of severe toxic comments are also toxic comments.However,when we closely look at TOI, we found that toxic comments has 15294 observations which accounts for 94.26% of the total nasty comments. We then decide to further split the TOI category by discarding toxic comments. Therefore we create a new variable called OI, which only contains obscene and insult comments. While insult comments has 7877 observation and obscene comments has 8449 observations, the number of comments in two sub-categories are balanced. 
+
+We originally want to use classification tree to distinguish OI comments, identity hate comments and threat comments. Therefore we also create categorical variable identity hate and threat and add them together with OI into the nasty data to identify OI comments, threat comments and identity hate comments separately. 
+
+However, classification tree requires a balanced number of observations in each category, and the number of OI comments are too much comparing to identity hate and threat comments, we then decide to only focus on identity hate and threat first. Therefore, according to the previous analysis on the word frequency and uniqueness, we pick word including d-e, f-t, f-k and n-r in identity hate and threats as potential identifiers. 
+
+We randomly choose 90% of the observations in Nasty Data as out training data  and use the remaining 10% of the observations in nasty comments as our test data set. We extract all comments that classified as identity hate and threat from the training data and fit a classification tree. The result is attached below. 
+
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+##Create a categorical variable to identify TOI, Ihate, or Threat
+Ihate<-ifelse(NastyData$identity_hate==1,1,0)
+TOI<-ifelse(NastyData$toxic==1|NastyData$obscene==1|NastyData$insult==1,1,0)
+Threat<-ifelse(NastyData$threat==1,1,0)
+categories<-ifelse(Ihate==1,"Ihate",ifelse(Threat==1,"Threat","TOI"))
+categories<-factor(categories)
+
+##Add variable categories in NastyData
+NastyData<- NastyData %>%
+  mutate(categories)
+summary(categories)
+
+##Create a categorical variable to identify TOI, Ihate, or Threat
+Toxic<-ifelse(NastyData$toxic==1,1,0)
+Insult<-ifelse(NastyData$insult==1,1,0)
+Obscene<-ifelse(NastyData$obscene==1,1,0)
+categories1<-ifelse(Toxic==1,"Toxic",ifelse(Insult==1,"Insult","Obscene"))
+categories1<-factor(categories1)
+##Add variable categories1 in NastyData
+NastyData<- NastyData %>%
+  mutate(categories1)
+
+##Add variable categories2 in NastyData
+Insult<-ifelse(NastyData$insult==1,1,0)
+Obscene<-ifelse(NastyData$obscene==1,1,0)
+Ihate<-ifelse(NastyData$identity_hate==1,1,0)
+Threat<-ifelse(NastyData$threat==1,1,0)
+categories2<-ifelse(Ihate==1,"Ihate",ifelse(Threat==1,"Threat",ifelse(Obscene==1,"Obscene","Insult")))
+categories2<-factor(categories2)
+NastyData<- NastyData %>%
+  mutate(categories2)
+```
+
+
+
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+library(caret)
+library(rpart)
+library(rattle)
+library(rpart.plot)
+
+
+##Create identifier Die for Threat
+NastyData$Die <- 0
+NastyData$Die <- as.numeric( unlist(lapply( NastyData$comment_text, function(x) "die" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier Fat for IdentityHate
+NastyData$Fat <- 0
+NastyData$Fat <- as.numeric( unlist(lapply( NastyData$comment_text, function(x) "fat" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier Fuck for TOI
+NastyData$Fuck <- 0
+NastyData$Fuck <- as.numeric( unlist(lapply( NastyData$comment_text, function(x) "fuck" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier Nigger for Ihate
+NastyData$Nigger <- 0
+NastyData$Nigger <- as.numeric( unlist(lapply( NastyData$comment_text, function(x) "nigger" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier Suck
+NastyData$Suck <- 0
+NastyData$Suck <- as.numeric( unlist(lapply( NastyData$comment_text, function(x) "suck" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier Shit
+NastyData$Shit <- 0
+NastyData$Shit <- as.numeric( unlist(lapply( NastyData$comment_text, function(x) "shit" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier Kill
+NastyData$Kill <- 0
+NastyData$Kill <- as.numeric( unlist(lapply( NastyData$comment_text, function(x) "kill" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier Faggot
+NastyData$Faggot <- 0
+NastyData$Faggot <- as.numeric( unlist(lapply( NastyData$comment_text, function(x) "faggot" %in% unlist( strsplit(x, split = " "))  )) )
+
+##Create identifier Moron
+NastyData$Moron <- 0
+NastyData$Moron <- as.numeric( unlist(lapply( NastyData$comment_text, function(x) "moron" %in% unlist( strsplit(x, split = " "))  )) )
+
+```
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+set.seed(100)
+train <- sample(1:nrow(NastyData), 14600)##random choose 90% NastyData as train
+train1 <-NastyData[train,] 
+test <-NastyData[-train,]
+```
+
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+library(rpart.plot) 
+set.seed(150) 
+##Create a new data set containing only Ihate and Threat in training
+Data3<-subset(train1,categories %in% c("Ihate","Threat"))
+Data3$categories<-factor(Data3$categories)
+jigsaw.tree = train(categories ~ Die+Fat+Fuck+Nigger, 
+                   data=Data3, 
+                   method="rpart", 
+                   trControl = trainControl(method = "cv"))
+```
+```{r,echo=FALSE,warning=FALSE}
+fancyRpartPlot(jigsaw.tree$finalModel)
+title("IdentityHate vs. Threat", line = 2)
+```
+
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+jigsaw.pred2 = predict(jigsaw.tree, newdata = Data3) 
+```
+
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+cmti<-confusionMatrix(jigsaw.pred2,Data3$categories)
+overall.accuracy <- cmti$table
+```
+
+
+
+According to the result, the identifier d-e is used to classify comments into identity hate and threat comments. Identity hate comments are defined by not including the specific word “di-” and the threat comments are defined by including the specific word d-e. In the identity hate cluster, there are 81% of identity hate comments and 19% of threat comments. In the threat cluster, there are 29% of identity hate comments and 71% threat comments. 
+
+```{r,echo=FALSE,warning=FALSE}
+dfti <- data.frame(
+   TrainData= c("PredictedIhate","PredictedThreat"),
+  ActualIhate = c(1268,299), 
+  ActualThreat = c(15,37))
+kable(dfti)
+```
+
+
+```{r,echo=FALSE,warning=FALSE}
+dftitr <- data.frame(
+   TestData= c("PredictedIhate","PredictedThreat"),
+  ActualIhate = c(122,44), 
+  ActualThreat = c(0,0))
+kable(dftitr)
+```
+
+We then compute the CER for our model. The training CER is 19.4% and the test CER is 26.5%. The model's performance is overall acceptable given there is only one identifier being used. However, there are still some mis-classified comments suggesting that there is room for improvement. Also there are no predicted threat or predicted identity hate comments for test data. It suggest that we are lack of observations for threat comments.
+
+### Model 2.2 Classification Tree for Obscene and Insult Comments
+We then focus on insult and obscene comments while discarding toxic comments as we discussed previously. We then repeat the previous method: select words we are going to use as identifiers according to the visualizations of word frequency and word clouds, create identifies and fit a new classification tree. The model is shown below: 
+
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+set.seed(150)
+##Create a new data set containing only Toxic and Obscene
+Data1<-subset(train1,categories1 %in% c("Obscene","Insult"))
+Data1$categories1<-factor(Data1$categories1)
+##Use classification tree to divide
+jigsaw.tree2 = train(categories1 ~ Fuck+Nigger+Moron+Faggot+Kill+Suck+Shit, 
+                   data=Data1, 
+                   method="rpart", 
+                   trControl = trainControl(method = "cv"))
+```
+```{r,echo=FALSE,warning=FALSE}
+fancyRpartPlot(jigsaw.tree2$finalModel)
+title("Insult vs. Obscene", line = 3)
+```
+
+In this classification tree, we can see that f-k and s-t are two effective identifiers. According to our tree, the identifier s-t is used to classify comments into insult  and obscene. The insult part is defined by not including the specific word “s-t". The threat part is defined by including the specific word “s-t”. F-k serves as an identifier that further separates comments in cluster 2, which was already being separated by identifier Shit. The identifier insult is used to further classify comments into insult and obscene comments. The insult part is defined by not including the specific word “f-k". The obscene part is defined by including the specific word “f-k”. Cluster 22 contains 59% Insult comments and 41% Obscene comments. Cluster 3 contains 24% Insult comments and 76% Obscene comments. According to the model, we can observe large amount of mis-calculation. The reason might attribute to the lack of observations. We then compute the CER for our model. 
+
+
+
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+jigsaw.pred3 = predict(jigsaw.tree2, newdata = Data1) 
+```
+
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+cm<-confusionMatrix(jigsaw.pred3,Data1$categories1)
+overall.accuracy <- cm$table
+```
+
+```{r,echo=FALSE,warning=FALSE}
+df2 <- data.frame(
+   TrainData= c("PredictedInsult","PredictedObscene"),
+  ActualInsult = c(469,15), 
+  ActualObscene = c(321,38))
+kable(df2)
+```
+
+
+
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+Data2<-subset(test,categories1 %in% c("Obscene","Insult"))
+Data2$categories1<-factor(Data2$categories1)
+jigsaw.tree3 = train(categories1 ~ Fuck+Nigger+Moron+Faggot+Kill+Suck+Shit, 
+                   data=Data2, 
+                   method="rpart", 
+                   trControl = trainControl(method = "cv"))
+```
+
+```{r,echo=FALSE,warning=FALSE, include=FALSE}
+jigsaw.pred4 = predict(jigsaw.tree3, newdata = Data2)
+```
+
+```{r,echo=FALSE,include=FALSE}
+cm1<-confusionMatrix(jigsaw.pred4,Data2$categories1)
+cm1$table
+```
+
+```{r,echo=FALSE,warning=FALSE}
+library(knitr)
+df <- data.frame(
+  TestData = c("PredictedInsult","PredictedObscene"),
+  ActualInsult = c(49,0), 
+  ActualObscene = c(39,0))
+kable(df)
+```
+From the confusion matrix of both training and testing data, we can calculate that the  training CER is 39.86% and the test CER is 44.32%. However, in the testing data, we observe no predictions of obscene data. It was a big problem for the model and we believe the reason of this might attribute to lack of observations of obscene comments. 
+
+## Conclusion and Further Work
+
+For Model 1.1, our identifier $N_i$, $F_i$, $S_i$, $B_i$ and $C_i$ has a positive relationship with identifying an obscene comments. 
+The expected log odds of a comments to be obscene is 0.69 higher if the comments contain n-g. 
+The expected log odds of a comments to be obscene is 2.27 higher if the comments contain f-k. 
+The expected log odds of a comments to be obscene is 1.87 higher if the comments contain s-k. 
+The expected log odds of a comments to be obscene is 3.09 higher if the comments contain b-h. 
+The expected log odds of a comments to be obscene is 3.09 higher if the comments contain c-t. 
+All of the identifiers are statistically significant since their p-value are all approximately 0. We made confusion matrix to see how well the model performs. 
+The CER of this model is 45.14%. It means that our model could explain 54.86% of the observation correctly. The model is doing an overall good job in differentiating obscene comments and non-obscene comments, but still has potential to be improved. In order to improve the model, we could select more unique word to obscene comments in the future as identifiers. 
+
+For Model 1.2, our identifier $St_i$, $F_i$, $S_i$ and $B_i$ has a positive relationship with identifying an insult comments. 
+The expected log odds of a comments to be insult is 0.56 higher if the comments contain s-d. 
+The expected log odds of a comments to be insult is 1.81 higher if the comments contain f-k. 
+The expected log odds of a comments to be insult is 1.11 higher if the comments contain s-k. 
+The expected log odds of a comments to be insult is 2.08 higher if the comments contain b-h. 
+
+All of the identifiers are statistically significant since their p-value are all approximately 0. We made confusion matrix to see how well the model performs. 
+The CER of this model is 48.61%. It means that our model could explain 52.39% of the observation correctly. The model is doing an overall good job in differentiating obscene comments and non-obscene comments, but still has potential to be improved. In order to improve the model, we could select more unique word to insult comments in the future as identifiers. 
+
+For Model 2.1 we fit a classification tree for threat and identity hate comments to find the words that could identify insult and identity hate comments. Our training CER is 19.4% and our test CER is 26.5%, suggesting an overall well performance. However there are still mis-classified comments due to the lack of observations for these two categories. 
+
+
+For Model 2.2, we fit a classification tree for obscene and insult hate comments to find the words that could identify insult and identity hate comments. Our training CER is 39.86% and the test CER is 44.32%, suggesting an overall acceptable performance. However there are still mis-classified comments. Also, the test CER are relatively high which means we have room of improvement.
+
+
+One reason to explain the poor accuracy is that the lack of observations for obscene and insult comments. Therefore, we decide to stick on identity hate, threat, obscene and insult comments. Later on, we will try to include more identifiers. Currently we only have 5 identifiers for Model 1.1, 4 identifiers for Model 1.2, 4 identifiers for Model 2.1, and 7 identifiers for model 2.2. Creating and utilizing more identifiers may increase our accuracy. Moreover, we will consider to creating identifiers containing multiple words to increase the accuracy of out models. We will also try different models and method, for instance, random forest to see if better accuracy could be achieved. 
+
+## Reference
+Song, Y., &amp; Lu, Y. (2015). Decision tree methods: Applications for classification and ... Retrieved December 04, 2020, from https://www.researchgate.net/publication/279457799_Decision_tree_methods_applications_for_classification_and_prediction
+
+Strobl, C., Malley, J., &amp; Tutz, G. (2009). An introduction to recursive partitioning: Rationale, application, and characteristics of classification and regression trees, bagging, and random forests. Psychological Methods, 14(4), 323-348. doi:10.1037/a0016973
+
+Hothorn, T., Hornik, K., &amp; Zeileis, A. (2012, January 1). Unbiased Recursive Partitioning: A Conditional Inference Framework. Retrieved December 04, 2020, from https://www.tandfonline.com/doi/abs/10.1198/106186006X133933
+
+
+
+
